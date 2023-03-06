@@ -51,9 +51,13 @@ func getJSONByUrl(url string, accessKey string, secretKey string, insecure bool,
 	}
 
 	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Error("Error creating GET request to collect JSON from API")
+		panic(err)
+	}
 	req.SetBasicAuth(accessKey, secretKey)
-	resp, err := client.Do(req)
 
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Error("Error Collecting JSON from API: ", err)
 		panic(err)
@@ -508,6 +512,7 @@ type Params struct {
 	limit      int
 	refresh    int
 	flush      int
+	restoreDay string
 }
 
 func RunRequests(c *cli.Context) error {
@@ -528,6 +533,7 @@ func RunRequests(c *cli.Context) error {
 		limit:      c.Int("limit"),
 		refresh:    c.Int("refresh"),
 		flush:      c.Int("flush"),
+		restoreDay: c.String("day"),
 	}
 	req := newRequests(params)
 	req.getDataByUrl()
@@ -588,7 +594,7 @@ func (r *Requests) sendToInflux() {
 			select {
 			case <-connected: // If data was sent to `connected`, that's a quit signal.
 				return
-			case <-ticker.C: // Try to send accumulated points we have.
+			case <-ticker.C: // Try to send the accumulated points we have.
 				if len(points) > 0 {
 					log.Info("Tick: Sending to influx ", len(points), " points")
 					if i.sendToInflux(points, 1) {
@@ -709,7 +715,7 @@ func (r *Requests) getDataByChan(stop chan struct{}) {
 		select {
 		case <-ticker.C:
 			log.Info("Tick: Getting data...")
-			go r.getData()
+			go r.getData() // TODO remove `go` keyword here should be safe. Test! Remove if possible.
 		case <-stop:
 			return
 		}
@@ -773,10 +779,36 @@ func (r *Requests) getJSON() error {
 	return nil
 }
 
+func (r *Requests) getHistoryJSON() error {
+	if r.Config.file != "" {
+		err := getJSONByFile(r.Config.file, r)
+		if err != nil {
+			return fmt.Errorf("error getting history JSON from file %s: %v", r.Config.file, err)
+		}
+		return nil
+	}
+
+	path := "/admin/restore/" + r.Config.restoreDay
+	err := getJSONByUrl(r.Config.url+path, r.Config.accessKey, r.Config.secretKey, r.Config.insecure, r)
+	if err != nil {
+		return fmt.Errorf("error getting JSON from URL %s: %v", r.Config.url+path, err)
+	}
+
+	return nil
+}
+
 // getData fetches the remote data and writes it to the r.Output channel of
 // Requests.
 func (r *Requests) getData() {
-	err := r.getJSON() // Fill r.Data
+	// Fetch data and fill r.Data with it.
+	var err error
+	if r.Config.restoreDay == "" {
+		err = r.getJSON()
+	} else {
+		err = r.getHistoryJSON()
+		// Doesn't work, kills it before data was written..
+		// r.Exit <- os.Interrupt // Just do it once!
+	}
 	if err != nil {
 		log.Error("Error getting data ", err)
 	}
@@ -789,6 +821,7 @@ func (r *Requests) getData() {
 				for _, point := range req.getPoints() {
 					r.Output <- point
 				}
+				close(r.Output) // TODO That does the trick but the (error) message is confusing!
 			}
 		}
 	}

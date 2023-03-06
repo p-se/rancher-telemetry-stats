@@ -143,6 +143,11 @@ func main() {
 			Usage: "Send metrics to inflush every flush seconds",
 			Value: 60,
 		},
+
+		cli.StringFlag{
+			Name: "day",
+			Usage: "The day to take all reports from and send to InfluxDB",
+		},
 	}
 	app.Before = before
 	app.Action = RunRequests
