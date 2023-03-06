@@ -26,7 +26,6 @@ import (
 // getJSONByUrl requests data from the given URL, authenticates with basic auth
 // and decodes the (mandatory) JSON result into target.
 func getJSONByUrl(url string, accessKey string, secretKey string, insecure bool, target interface{}) error {
-
 	start := time.Now()
 
 	log.Info("Connecting to ", url)
@@ -66,7 +65,7 @@ func getJSONByUrl(url string, accessKey string, secretKey string, insecure bool,
 	respFormatted := json.NewDecoder(resp.Body).Decode(target)
 
 	// Timings recorded as part of internal metrics
-	log.Info("Time to get json: ", float64((time.Since(start))/time.Millisecond), " ms")
+	log.Info("Time to fetch JSON from pgsql: ", float64((time.Since(start))/time.Millisecond), " ms")
 
 	// Close the response body, the underlying Transport should then close the connection.
 	resp.Body.Close()
@@ -726,8 +725,12 @@ func (r *Requests) getDataByUrl() {
 }
 
 func (r *Requests) getDataByChan(stop chan struct{}) {
-	ticker := time.NewTicker(time.Second * time.Duration(r.Config.refresh))
-	defer ticker.Stop()
+	var ticker *time.Ticker
+
+	if len(r.Config.restoreDates) == 0 {
+		ticker = time.NewTicker(time.Second * time.Duration(r.Config.refresh))
+		defer ticker.Stop()
+	}
 
 	r.getData(stop)
 
@@ -792,11 +795,21 @@ func (r *Requests) getJSON() error {
 		return nil
 	}
 
+	var response Response
+
 	path := "/admin/active?hours=" + strconv.Itoa(r.Config.hours)
-	err := getJSONByUrl(r.Config.url+path, r.Config.accessKey, r.Config.secretKey, r.Config.insecure, r)
+	err := getJSONByUrl(
+		r.Config.url+path,
+		r.Config.accessKey,
+		r.Config.secretKey,
+		r.Config.insecure,
+		&response,
+	)
 	if err != nil {
 		return fmt.Errorf("error getting JSON from URL %s: %v", r.Config.url+path, err)
 	}
+
+	r.Data <- response.Data
 
 	return nil
 }
@@ -815,9 +828,11 @@ func (r *Requests) getHistoryJSON() error {
 	}
 
 	go func() {
+		defer close(r.Data)
 		for _, date := range r.Config.restoreDates {
 			var response Response
 			path := "/admin/restore/" + date.String()
+			log.Debugf("fetching data from path %s", path)
 			err := getJSONByUrl(
 				r.Config.url+path,
 				r.Config.accessKey,
