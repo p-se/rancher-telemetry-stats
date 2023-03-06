@@ -1,3 +1,5 @@
 .env
 src/rancher-telemetry-stats
 act-*
+src/GeoLite2-City.mmdb
+src/rancher-telemetry-stats
