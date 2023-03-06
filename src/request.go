@@ -486,7 +486,7 @@ func (r *Request) getData(geoipdb string) bool {
 	diff := now.Sub(r.LastSeen)
 
 	if diff < 0 {
-		log.Debugf("Skipping request with time in future ", r.LastSeen)
+		log.Debugf("Skipping request with time in future %v", r.LastSeen)
 		r.printJson()
 		return false
 	}
@@ -500,44 +500,48 @@ func (r *Request) getData(geoipdb string) bool {
 
 // Params are the parameters necessary to create a Requests object.
 type Params struct {
-	url        string
-	hours      int
-	accessKey  string
-	secretKey  string
-	influxurl  string
-	influxdb   string
-	influxuser string
-	influxpass string
-	insecure   bool
-	geoipdb    string
-	file       string
-	format     string
-	preview    bool
-	limit      int
-	refresh    int
-	flush      int
-	restoreDay string
+	url          string
+	hours        int
+	accessKey    string
+	secretKey    string
+	influxurl    string
+	influxdb     string
+	influxuser   string
+	influxpass   string
+	insecure     bool
+	geoipdb      string
+	file         string
+	format       string
+	preview      bool
+	limit        int
+	refresh      int
+	flush        int
+	restoreDates Dates
 }
 
 func RunRequests(c *cli.Context) error {
+	restoreDates, err := NewDates(c.String("dates"))
+	if err != nil {
+		return err
+	}
 	params := Params{
-		url:        c.String("url"),
-		hours:      c.Int("hours"),
-		accessKey:  c.String("accesskey"),
-		secretKey:  c.String("secretkey"),
-		influxurl:  c.String("influxurl"),
-		influxdb:   c.String("influxdb"),
-		influxuser: c.String("influxuser"),
-		influxpass: c.String("influxpass"),
-		insecure:   c.Bool("insecure"),
-		geoipdb:    c.String("geoipdb"),
-		file:       c.String("file"),
-		format:     c.String("format"),
-		preview:    c.Bool("preview"),
-		limit:      c.Int("limit"),
-		refresh:    c.Int("refresh"),
-		flush:      c.Int("flush"),
-		restoreDay: c.String("day"),
+		url:          c.String("url"),
+		hours:        c.Int("hours"),
+		accessKey:    c.String("accesskey"),
+		secretKey:    c.String("secretkey"),
+		influxurl:    c.String("influxurl"),
+		influxdb:     c.String("influxdb"),
+		influxuser:   c.String("influxuser"),
+		influxpass:   c.String("influxpass"),
+		insecure:     c.Bool("insecure"),
+		geoipdb:      c.String("geoipdb"),
+		file:         c.String("file"),
+		format:       c.String("format"),
+		preview:      c.Bool("preview"),
+		limit:        c.Int("limit"),
+		refresh:      c.Int("refresh"),
+		flush:        c.Int("flush"),
+		restoreDates: restoreDates,
 	}
 	req := newRequests(params)
 	req.getDataByUrl()
@@ -553,7 +557,7 @@ type Requests struct {
 	Exit    chan os.Signal
 	Readers []chan struct{}
 	Config  Params
-	Data    []Request `json:"data"`
+	Data    chan []Request
 }
 
 func newRequests(conf Params) *Requests {
@@ -565,6 +569,7 @@ func newRequests(conf Params) *Requests {
 	r.Input = make(chan *Request, 1)
 	r.Output = make(chan *influx.Point, 1)
 	r.Exit = make(chan os.Signal, 1)
+	r.Data = make(chan []Request, 1)
 	signal.Notify(r.Exit, os.Interrupt, syscall.SIGTERM)
 
 	customFormatter := new(log.TextFormatter)
@@ -726,12 +731,12 @@ func (r *Requests) getDataByChan(stop chan struct{}) {
 
 	r.getData(stop)
 
-	if r.Config.restoreDay == "" {
+	if len(r.Config.restoreDates) == 0 {
 		for {
 			select {
 			case <-ticker.C:
 				log.Info("Tick: Getting data...")
-				r.getData(stop) // TODO remove `go` keyword here should be safe. Test! Remove if possible.
+				r.getData(stop)
 			case <-stop:
 				return
 			}
@@ -747,25 +752,25 @@ func (r *Requests) getDataByFile() {
 		log.Error("Error reading file ", r.Config.file, err)
 	}
 
+	requests := <-r.Data
+
 	lines := bytes.Split(dat, []byte("\n"))
 
 	for _, line := range lines {
 		if line != nil {
 			req := newrequestByString(string(line), "|")
 			if req != nil {
-				r.Data = append(r.Data, *req)
+				requests = append(requests, *req)
 			}
 		}
 	}
 
-	for _, req := range r.Data {
-		aux := Request{}
-		aux = req
-		if aux.getData(r.Config.geoipdb) {
+	for _, req := range requests {
+		if req.getData(r.Config.geoipdb) {
 			if r.Config.format == "json" {
-				r.Input <- &aux
+				r.Input <- &req
 			} else {
-				for _, point := range aux.getPoints() {
+				for _, point := range req.getPoints() {
 					r.Output <- point
 				}
 			}
@@ -796,6 +801,10 @@ func (r *Requests) getJSON() error {
 	return nil
 }
 
+type Response struct {
+	Data []Request `json:"Data"`
+}
+
 func (r *Requests) getHistoryJSON() error {
 	if r.Config.file != "" {
 		err := getJSONByFile(r.Config.file, r)
@@ -805,11 +814,24 @@ func (r *Requests) getHistoryJSON() error {
 		return nil
 	}
 
-	path := "/admin/restore/" + r.Config.restoreDay
-	err := getJSONByUrl(r.Config.url+path, r.Config.accessKey, r.Config.secretKey, r.Config.insecure, r)
-	if err != nil {
-		return fmt.Errorf("error getting JSON from URL %s: %v", r.Config.url+path, err)
-	}
+	go func() {
+		for _, date := range r.Config.restoreDates {
+			var response Response
+			path := "/admin/restore/" + date.String()
+			err := getJSONByUrl(
+				r.Config.url+path,
+				r.Config.accessKey,
+				r.Config.secretKey,
+				r.Config.insecure,
+				&response,
+			)
+			if err != nil {
+				log.Fatalf("error getting JSON from URL %s: %v", r.Config.url+path, err)
+				return
+			}
+			r.Data <- response.Data
+		}
+	}()
 
 	return nil
 }
@@ -817,18 +839,20 @@ func (r *Requests) getHistoryJSON() error {
 // getData fetches the remote data and writes it to the r.Output channel of
 // Requests.
 func (r *Requests) getData(stop chan struct{}) {
+	restoring := len(r.Config.restoreDates) > 0
+
 	// Fetch data and fill r.Data with it.
 	var err error
-	if r.Config.restoreDay == "" {
+	if !restoring {
 		err = r.getJSON()
 	} else {
-		err = r.getHistoryJSON() // TODO restore
+		err = r.getHistoryJSON()
 	}
 	if err != nil {
 		log.Error("Error getting data ", err)
 	}
 
-	if r.Config.restoreDay != "" {
+	if restoring {
 		// Remove the data to be restored, because we cannot overwrite it, as we
 		// don't have the exact time of those points any more (the time is used
 		// from installation table, not record table). Installation gets a
@@ -836,25 +860,29 @@ func (r *Requests) getData(stop chan struct{}) {
 		// being taken from the record. As installation only holds a timestamp
 		// for the (first and) last record, previous timestamps for the last
 		// record are removed and lost forever.
-		if !r.deleteForDay(r.Config.restoreDay) {
-			stop <- struct{}{}
-			return
+		for _, day := range r.Config.restoreDates {
+			if !r.deleteForDay(day.String()) {
+				stop <- struct{}{}
+				return
+			}
 		}
 	}
 
-	for _, req := range r.Data {
-		if req.getData(r.Config.geoipdb) { // Validate r.Data and complement r.Location and r.Status
-			if r.Config.format == "json" {
-				r.Input <- &req
-			} else { // influx, the default
-				for _, point := range req.getPoints() {
-					r.Output <- point
+	for reqs := range r.Data {
+		for _, req := range reqs {
+			if req.getData(r.Config.geoipdb) { // Validate r.Data and complement r.Location and r.Status
+				if r.Config.format == "json" {
+					r.Input <- &req
+				} else { // influx, the default
+					for _, point := range req.getPoints() {
+						r.Output <- point
+					}
 				}
 			}
 		}
 	}
 
-	if r.Config.restoreDay != "" {
+	if restoring {
 		// Signal we're done with reading input. Only signal if data is being
 		// restored, never if run in "daemon" mode.
 		stop <- struct{}{}

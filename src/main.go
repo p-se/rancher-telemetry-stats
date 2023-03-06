@@ -26,6 +26,27 @@ func main() {
 		app.Version = VERSION
 	}
 
+	app.Commands = []cli.Command{
+		{
+			Name:        "run",
+			Description: "continuously migrate recent data",
+			Action:      RunRequests,
+		},
+		{
+			Name:        "restore",
+			Description: "restore data from a specific date or range and exit",
+			Action: func(c *cli.Context) error {
+				return RunRequests(c)
+			},
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "dates",
+					Usage: "dates in the format 2022-12-24, single value or separated by minus or comma",
+				},
+			},
+		},
+	}
+
 	app.Flags = []cli.Flag{
 		cli.BoolFlag{
 			Name:   "debug",
@@ -142,11 +163,6 @@ func main() {
 			Name:  "flush",
 			Usage: "Send metrics to inflush every flush seconds",
 			Value: 60,
-		},
-
-		cli.StringFlag{
-			Name: "day",
-			Usage: "The day to take all reports from and send to InfluxDB",
 		},
 	}
 	app.Before = before

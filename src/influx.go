@@ -178,7 +178,7 @@ func (i *Influx) deleteForDay(day string) bool {
 	pSql := fmt.Sprintf(`delete from telemetry where time >= '%s' and time < '%s' + 1d;`, day, day)
 	resp, err := i.doQuery(pSql, 3)
 	if err != nil {
-		log.Warnf("Deleting entries for day %s failed: %s", err)
+		log.Warnf("Deleting entries for day %s failed: %s", day, err)
 		return false
 	}
 
