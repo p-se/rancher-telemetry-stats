@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	_ "github.com/influxdata/influxdb1-client"
@@ -57,8 +58,13 @@ func (i *Influx) Check(retry int) bool {
 	return true
 }
 
+// CheckConnect creates a ticker with an interval. On every tick the connection
+// to InfluxDB is checked. The check also tries to re-establish the connection.
+// If it fails to do so, the returned channel will be closed to signal, that the
+// connection has been lost.
 func (i *Influx) CheckConnect(interval int) chan bool {
 	ticker := time.NewTicker(time.Second * time.Duration(interval))
+	defer ticker.Stop()
 	connected := make(chan bool)
 
 	go func() {
@@ -160,6 +166,25 @@ func (i *Influx) Write() {
 	}
 
 	log.Info("Time to write ", len(i.batch.Points()), " points: ", float64((time.Since(start))/time.Millisecond), "ms")
+}
+
+func (i *Influx) deleteForDay(day string) bool {
+	_, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		log.Warnf("Deleting entries for day %s failed: day not formatted correctly", day)
+		return false
+	}
+
+	pSql := fmt.Sprintf(`delete from telemetry where time >= '%s' and time < '%s' + 1d;`, day, day)
+	resp, err := i.doQuery(pSql, 3)
+	if err != nil {
+		log.Warnf("Deleting entries for day %s failed: %s", err)
+		return false
+	}
+
+	log.Infof("%+v", resp)
+
+	return true
 }
 
 func (i *Influx) sendToInflux(m []influx.Point, retry int) bool {

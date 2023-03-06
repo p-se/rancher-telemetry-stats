@@ -175,9 +175,8 @@ func (r *Request) printInflux() {
 // getPoints collects the various InfluxDB points of the categories apps,
 // drivers and telemetry from the record previously obtained and returns them.
 func (r *Request) getPoints() []*influx.Point {
-	out := r.getTelemetryAppPoints()
-	out = append(out, r.getTelemetryDriverPoints()...)
-	return append(out, r.getTelemetryPoint())
+	points := append(r.getTelemetryAppPoints(), r.getTelemetryDriverPoints()...)
+	return append(points, r.getTelemetryPoint())
 }
 
 // getTelemetryAppPoints collects the app points from the current record,
@@ -465,13 +464,18 @@ func (r *Request) isNew() string {
 		return "active"
 	} else {
 		return "new"
+		// TODO look into the status new. If any new clusters have sent a report
+		// while telemetry stats was absent, setting the first few records
+		// received to the status "new" will only work if r.FirstSeen is set
+		// correctly!!! Which it currently isn't. Instead, it uses its zero
+		// value.
 	}
 }
 
-// getData checks the validity of the record (fields and time) and retrieves the
-// location of the IP address in the record using the location database and
-// complements it in the request.  It also updates the status of the requests (based
-// on the time of the record). Returns false if any of those operations failed.
+// getData checks the validity of the record using `Request.checkData()` and
+// retrieves and fills the location of the IP address in the record using a
+// location database.  It also updates the status of the record (based on the
+// time of the record). Returns false if any of those operations failed.
 func (r *Request) getData(geoipdb string) bool {
 	if !r.checkData() {
 		log.Debugf("Skipping request without correct data")
@@ -578,6 +582,17 @@ func (r *Requests) Close() {
 
 }
 
+func (r *Requests) deleteForDay(day string) bool {
+	i := newInflux(r.Config.influxurl, r.Config.influxdb, r.Config.influxuser, r.Config.influxpass)
+	if i.Connect() {
+		defer i.Close()
+		log.Infof("Deleting from measurement telemetry for day %s", day)
+		return i.deleteForDay(day)
+	}
+
+	return false
+}
+
 func (r *Requests) sendToInflux() {
 	var points []influx.Point
 	var pointsLength int
@@ -589,6 +604,7 @@ func (r *Requests) sendToInflux() {
 		defer i.Close()
 
 		ticker := time.NewTicker(time.Second * time.Duration(r.Config.flush))
+		defer ticker.Stop()
 
 		for {
 			select {
@@ -698,26 +714,27 @@ func (r *Requests) getDataByUrl() {
 			//close(r.Exit)
 			log.Info("Exit signal detected....Closing...")
 			go r.closeReaders()
-			select {
-			case <-outdone:
-				return
-			}
+			<-outdone
+			return
 		}
 	}
 }
 
 func (r *Requests) getDataByChan(stop chan struct{}) {
 	ticker := time.NewTicker(time.Second * time.Duration(r.Config.refresh))
+	defer ticker.Stop()
 
-	go r.getData()
+	r.getData(stop)
 
-	for {
-		select {
-		case <-ticker.C:
-			log.Info("Tick: Getting data...")
-			go r.getData() // TODO remove `go` keyword here should be safe. Test! Remove if possible.
-		case <-stop:
-			return
+	if r.Config.restoreDay == "" {
+		for {
+			select {
+			case <-ticker.C:
+				log.Info("Tick: Getting data...")
+				r.getData(stop) // TODO remove `go` keyword here should be safe. Test! Remove if possible.
+			case <-stop:
+				return
+			}
 		}
 	}
 }
@@ -799,18 +816,30 @@ func (r *Requests) getHistoryJSON() error {
 
 // getData fetches the remote data and writes it to the r.Output channel of
 // Requests.
-func (r *Requests) getData() {
+func (r *Requests) getData(stop chan struct{}) {
 	// Fetch data and fill r.Data with it.
 	var err error
 	if r.Config.restoreDay == "" {
 		err = r.getJSON()
 	} else {
-		err = r.getHistoryJSON()
-		// Doesn't work, kills it before data was written..
-		// r.Exit <- os.Interrupt // Just do it once!
+		err = r.getHistoryJSON() // TODO restore
 	}
 	if err != nil {
 		log.Error("Error getting data ", err)
+	}
+
+	if r.Config.restoreDay != "" {
+		// Remove the data to be restored, because we cannot overwrite it, as we
+		// don't have the exact time of those points any more (the time is used
+		// from installation table, not record table). Installation gets a
+		// timestamp a short while after the record has been received, it is not
+		// being taken from the record. As installation only holds a timestamp
+		// for the (first and) last record, previous timestamps for the last
+		// record are removed and lost forever.
+		if !r.deleteForDay(r.Config.restoreDay) {
+			stop <- struct{}{}
+			return
+		}
 	}
 
 	for _, req := range r.Data {
@@ -821,9 +850,14 @@ func (r *Requests) getData() {
 				for _, point := range req.getPoints() {
 					r.Output <- point
 				}
-				close(r.Output) // TODO That does the trick but the (error) message is confusing!
 			}
 		}
+	}
+
+	if r.Config.restoreDay != "" {
+		// Signal we're done with reading input. Only signal if data is being
+		// restored, never if run in "daemon" mode.
+		stop <- struct{}{}
 	}
 }
 
@@ -835,8 +869,8 @@ func (r *Requests) print() {
 	}
 }
 
-// getOutput prints or writes the data that has been retrieved in parallel from
-// another goroutine.
+// getOutput writes the data that has been retrieved in parallel from another
+// goroutine to InfluxDB. The data is printed if `preview` is enabled.
 func (r *Requests) getOutput() {
 	if r.Config.format == "json" {
 		r.printJson()
