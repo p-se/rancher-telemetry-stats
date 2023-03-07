@@ -65,7 +65,12 @@ func getJSONByUrl(url string, accessKey string, secretKey string, insecure bool,
 	respFormatted := json.NewDecoder(resp.Body).Decode(target)
 
 	// Timings recorded as part of internal metrics
-	log.Info("Time to fetch JSON from pgsql: ", float64((time.Since(start))/time.Millisecond), " ms")
+	log.Info(
+		"Time to fetch JSON from URL: ",
+		float64((time.Since(start))/time.Millisecond),
+		"ms ",
+		url,
+	)
 
 	// Close the response body, the underlying Transport should then close the connection.
 	resp.Body.Close()
@@ -588,7 +593,7 @@ func (r *Requests) Close() {
 
 func (r *Requests) deleteForDay(day string) bool {
 	i := newInflux(r.Config.influxurl, r.Config.influxdb, r.Config.influxuser, r.Config.influxpass)
-	if i.Connect() {
+	if i.Init() {
 		defer i.Close()
 		log.Infof("Deleting from measurement telemetry for day %s", day)
 		return i.deleteForDay(day)
@@ -603,7 +608,7 @@ func (r *Requests) sendToInflux() {
 
 	i := newInflux(r.Config.influxurl, r.Config.influxdb, r.Config.influxuser, r.Config.influxpass)
 
-	if i.Connect() {
+	if i.Init() {
 		connected := i.CheckConnect(r.Config.refresh)
 		defer i.Close()
 
@@ -643,9 +648,7 @@ func (r *Requests) sendToInflux() {
 					pointsLength = len(points)
 					if pointsLength > 0 {
 						log.Info("Batch: Sending to influx ", pointsLength, " points")
-						if i.sendToInflux(points, 1) { // Send all points.
-							points = []influx.Point{} // Clear `points`.
-						} else {
+						if !i.sendToInflux(points, 1) { // Send all points.
 							log.Warn("Batch: Sending remaining points failed")
 						}
 					}
@@ -857,7 +860,7 @@ func (r *Requests) getJSON() error {
 }
 
 type Response struct {
-	Data []Request `json:"Data"`
+	Data []Request `json:"data"`
 }
 
 func (r *Requests) getHistoryJSON() error {
