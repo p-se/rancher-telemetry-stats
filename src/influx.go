@@ -37,23 +37,19 @@ func newInflux(url, db, user, pass string) *Influx {
 }
 
 func (i *Influx) Check(retry int) bool {
-	resp_time, _, err := i.cli.Ping(i.timeout)
+	respTime, _, err := i.client.Ping(i.timeout)
+	for index := 1; index <= retry && err != nil; index++ {
+		log.Warn("Influx disconnected. Reconnecting ", index+1, " of ", retry, "...")
+		time.Sleep(time.Duration(1) * time.Second)
+		respTime, _, err = i.client.Ping(i.timeout)
+	}
+
 	if err != nil {
-		connected := i.Connect()
-		for index := 1; index <= retry && !connected; index++ {
-			log.Warn("Influx disconnected. Reconnecting ", index+1, " of ", retry, "...")
-			time.Sleep(time.Duration(1) * time.Second)
-			connected = i.Connect()
-			if connected {
-				resp_time, _, err = i.cli.Ping(i.timeout)
-			}
-		}
-		if err != nil {
-			log.Error("Failed to connect to influx ", i.url)
-			return false
-		}
-	} 
-	log.Info("Influx response time: ", resp_time)
+		log.Error("Failed to ping influx")
+		return false
+	}
+
+	log.Info("Influx response time: ", respTime)
 	return true
 }
 
