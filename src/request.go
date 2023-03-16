@@ -652,6 +652,48 @@ func (r *Requests) sendToInflux() {
 							log.Warn("Batch: Sending remaining points failed")
 						}
 					}
+
+					// If we have any restore dates, this is a restore operation
+					// and we need to call some of the InfluxDB continuous query
+					// statements manually for the data to be aggregated into
+					// the required InfluxDB measurements, since the CQs
+					// configured in InfluxDB will never do that for data of a
+					// certain age.
+					for _, date := range r.Config.restoreDates {
+						log.Info("Running continuous queries for restored data...")
+
+						cqs := []string{
+							`SELECT distinct("uid") AS "uid" INTO "byUid_24h" FROM "telemetry"  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status,install_version `,
+							`SELECT distinct("uid") AS "uid" INTO "by_country_24h" FROM "telemetry"  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),country,country_isocode,uid,status `,
+							`SELECT last("container_total") AS "containers", last("project_pod_total") AS "pods" INTO "pods_containers_24h" FROM "telemetry"  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status `,
+							`SELECT last("orch_kubernetes") AS "kubernetes", last("orch_mesos") AS "mesos", last("orch_swarm") AS "swarm", last("orch_windows") AS "windows", last("orch_cattle") AS "cattle" INTO "orchestrators_24h" FROM "telemetry" WHERE record_version = '1'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status`,
+							`SELECT last("service_total") AS "total", last("service_active") AS "active" INTO "services_24h" FROM "telemetry" WHERE record_version = '1'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status`,
+							`SELECT last("stack_total") AS "total", last("stack_active") AS "active", last("stack_from_catalog") AS "from_catalog" INTO "stacks_24h" FROM "telemetry" WHERE record_version = '1'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status`,
+							`SELECT last("host_active") AS "host", last("host_cpu_cores_total") AS "cpu", last("host_mem_mb_total") AS "memory" INTO "hosts_24h" FROM "telemetry" WHERE record_version = '1'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status`,
+							`SELECT last("container_total") AS "total", last("container_running") AS "running" INTO "containers_24h" FROM "telemetry" WHERE record_version = '1'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status`,
+							`SELECT last("ip") AS "ip", last("cluster_total") AS "total", last("cluster_active") AS "active", last("cluster_monitoring_total") AS "monitoring", last("cluster_istio_total") AS "istio", last("cluster_cpu_total") AS "cpu", last("cluster_driver_aks") AS "cluster_aks", last("cluster_driver_eks") AS "cluster_eks", last("cluster_driver_imported") AS "cluster_imported", last("cluster_driver_gke") AS "cluster_gke", last("cluster_driver_rke") AS "cluster_rke", last("cluster_driver_k3s") AS "cluster_k3s", last("cluster_driver_k3sBased") AS "cluster_k3sBased", last("cluster_cloud_provider_aws") AS "cluster_cloud_provider_aws",last("cluster_cloud_provider_azure") AS "cluster_cloud_provider_azure", last("cluster_cloud_provider_custom") AS "cluster_cloud_provider_custom", last("cluster_cloud_provider_external::integer") AS "cluster_cloud_provider_external", last("cluster_cloud_provider_gce::integer") AS "cluster_cloud_provider_gce",last("cluster_cloud_provider_openstack") AS "cluster_cloud_provider_openstack", last("cluster_cloud_provider_vsphere") AS "cluster_cloud_provider_vsphere", last("cluster_mem_mb_total") AS "mem_mb", last("cluster_logging_provider_custom") AS "cluster_logging_provider_custom", last("cluster_logging_provider_elasticsearch") AS "cluster_logging_provider_elasticsearch", last("cluster_logging_provider_fluentd") AS "cluster_logging_provider_fluentd", last("cluster_logging_provider_kafka") AS "cluster_logging_provider_kafka", last("cluster_logging_provider_splunk") AS "cluster_logging_provider_splunk", last("cluster_logging_provider_syslog") AS "cluster_logging_provider_syslog", last("cluster_namespace_total") AS "namespaces", last("cluster_namespace_from_catalog") AS "namespace_from_catalog" INTO "v2_clusters_24h" FROM "telemetry" WHERE record_version = '2'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status`,
+							`SELECT last("ip") AS "ip", last("project_total") AS "total", last("project_namespace_total") AS "namespaces", last("project_namespace_from_catalog") AS "namespace_from_catalog", last("project_pod_total") AS "pods", last("project_workload_total") AS "workloads" INTO "v2_projects_24h" FROM "telemetry" WHERE record_version = '2'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status`,
+							`SELECT last("ip") AS "ip", last("node_total") AS "total", last("node_active") AS "active", last("node_from_template") AS "from_template", last("node_driver_azure") AS "node_azure", last("node_driver_ec2") AS "node_ec2", last("node_driver_do") AS "node_do", last("node_driver_openstack") AS "node_openstack", last("node_driver_vsphere") AS "node_vsphere", last("node_imported") AS "imported", last("node_mem_mb_total") AS "mem_mb", last("node_role_controlplane") AS "controlplane", last("node_role_etcd") AS "etcd", last("node_role_worker") AS "worker" INTO "v2_nodes_24h" FROM "telemetry" WHERE record_version = '2'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(24h),uid,status`,
+							`SELECT last("total") AS "total", last("active") AS "active", last("cpu") AS "cpu", last("cluster_aks") AS "cluster_aks", last("cluster_eks") AS "cluster_eks", last("cluster_imported") AS "cluster_imported", last("cluster_gke") AS "cluster_gke", last("cluster_rke") AS "cluster_rke", last("cluster_cloud_provider_aws") AS "cluster_cloud_provider_aws",last("cluster_cloud_provider_azure") AS "cluster_cloud_provider_azure", last("cluster_cloud_provider_custom") AS "cluster_cloud_provider_custom", last("cluster_cloud_provider_external::integer") AS "cluster_cloud_provider_external", last("cluster_cloud_provider_gce::integer") AS "cluster_cloud_provider_gce",last("cluster_cloud_provider_openstack") AS "cluster_cloud_provider_openstack", last("cluster_cloud_provider_vsphere") AS "cluster_cloud_provider_vsphere", last("mem_mb") AS "mem_mb", last("namespaces") AS "namespaces", last("namespace_from_catalog") AS "namespace_from_catalog" INTO "v2_clusters_7d" FROM "v2_clusters_24h" WHERE time >= '2019-01-01'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(7d),uid,status`,
+							`SELECT last("total") AS "total", last("namespaces") AS "namespaces", last("namespace_from_catalog") AS "namespace_from_catalog", last("pods") AS "pods", last("workloads") AS "workloads" INTO "v2_projects_7d" FROM "v2_projects_24h" WHERE time >= '2020-01-01'  AND time >= '%s' AND time < '%s' + 1d GROUP BY time(7d),uid,status`,
+							`SELECT last("total") AS "total", last("active") AS "active", last("from_template") AS "from_template", last("node_azure") AS "node_azure", last("node_ec2") AS "node_ec2", last("node_do") AS "node_do", last("node_openstack") AS "node_openstack", last("node_vsphere") AS "node_vsphere", last("imported") AS "imported", last("mem_mb") AS "mem_mb", last("controlplane") AS "controlplane", last("etcd") AS "etcd", last("worker") AS "worker" INTO "v2_nodes_7d" FROM "v2_nodes_24h" WHERE time >= '2020-01-01'   AND time >= '%s' AND time < '%s' + 1d GROUP BY time(7d),uid,status`,
+							`SELECT TOP(total, uid, 10) as total, ip, active, mem_mb, cpu, namespaces INTO v2_top_clusters_by_total FROM v2_clusters_24h  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(1d) `,
+							`SELECT TOP(active, uid, 10) as active, ip, total, mem_mb, cpu, namespaces INTO v2_top_clusters_by_active FROM v2_clusters_24h  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(1d) `,
+							`SELECT TOP(total, uid, 10) as total, ip, pods, workloads, namespaces INTO v2_top_projects_by_total FROM v2_projects_24h  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(1d) `,
+							`SELECT TOP(total, uid, 10) as total, ip, active, mem_mb, controlplane, etcd, worker INTO v2_top_nodes_by_total FROM v2_nodes_24h  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(1d) `,
+							`SELECT last("total") AS "total", uid INTO "v2_apps_24h" FROM "telemetry_apps"  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(1d),* `,
+							`SELECT last("total") AS "total", uid INTO "v2_drivers_24h" FROM "telemetry_drivers"  WHERE time >= '%s' AND time < '%s' + 1d GROUP BY time(1d),* `,
+						}
+
+						for j, cq := range cqs {
+							log.Debug("Running query %d")
+							_, err := i.doQuery(fmt.Sprintf(cq, date, date), 1)
+							if err != nil {
+								panic(fmt.Sprintf("error in CQ #%d: %v", j+1, err))
+							}
+						}
+					}
+
 					return // Exit the sendToInflux function.
 				}
 			}
