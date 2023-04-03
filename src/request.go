@@ -127,6 +127,12 @@ func newrequestByString(line, sep string) *Request {
 
 func (r *Request) checkData() bool {
 	if len(r.Uid) < 3 || r.Record == nil {
+		log.Debugf(
+			"checkData: len(r.Uid) < 3 || r.Record == nil\n"+
+				"checkData: %d || %t\n",
+			len(r.Uid) < 3,
+			r.Record == nil,
+		)
 		return false
 	}
 
@@ -144,10 +150,17 @@ func (r *Request) checkData() bool {
 
 	for _, key := range record_key {
 		if r.Record[key] == nil {
+			log.Debugf("checkData: r.Record[key] == nil")
+			log.Debugf(
+				"checkData: r.Record[%s] == nil => %t",
+				key,
+				r.Record[key] == nil,
+			)
 			return false
 		}
 	}
 
+	log.Debugf("checkData: return true")
 	return true
 }
 
