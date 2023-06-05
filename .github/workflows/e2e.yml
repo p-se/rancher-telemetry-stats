@@ -51,9 +51,12 @@ jobs:
       #     chmod +x /usr/local/bin/dapper
       #     TAG=dev dapper
 
-      - name: Compile telemetry & build container image
+      - name: Compile Telemetry Stats & build container image
         run: |
-            docker build -t rancherlabs/rancher-telemetry-stats:dev .
+            docker build \
+              --build-arg version=master \
+              -t rancherlabs/rancher-telemetry-stats:dev \
+              .
 
       - name: Upload Docker images
         run: |
