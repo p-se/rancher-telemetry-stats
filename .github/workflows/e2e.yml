@@ -28,6 +28,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Get branch name
+        run: "echo \"Branch name: ${GITHUB_REF#refs/heads/}\""
+
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
@@ -50,11 +53,13 @@ jobs:
       #     curl -sL https://releases.rancher.com/dapper/latest/dapper-$(uname -s)-$(uname -m) > /usr/local/bin/dapper
       #     chmod +x /usr/local/bin/dapper
       #     TAG=dev dapper
-
       - name: Compile Telemetry Stats & build container image
         run: |
+            echo "DEBUG: GITHUB_REF=${GITHUB_REF}"
+            echo "DEBUG: clone_url=${{ github.event.pull_request.head.repo.clone_url }}"
             docker build \
-              --build-arg version=master \
+              --build-arg version=${GITHUB_REF#refs/heads/} \
+              --build-arg upstream=${{ github.event.pull_request.head.repo.clone_url }} \
               -t rancherlabs/rancher-telemetry-stats:dev \
               .
 
