@@ -28,6 +28,8 @@ spec:
             - configMapRef:
                 name: telemetry-client
           env:
+            - name: TELEMETRY_INTERVAL
+              value: "1m"
             - name: CATTLE_TOKEN_KEY
               valueFrom:
                 secretKeyRef:

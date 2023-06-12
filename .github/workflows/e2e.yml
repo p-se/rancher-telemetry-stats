@@ -22,23 +22,56 @@ env:
   HOST_NAME: telemetry-test  # for `start` script
   CLUSTER_NAME: telemetry-test
   TOKEN: ${{ secrets.TOKEN }}
+  # REPO: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+  REPO: telemetry-stats
+  REPO_URL: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+  REPOSITORY: ${{ github.repository }}
+  BRANCH: ${{ github.ref_name }}
+  TELEMETRY_REPO: https://github.com/rancher/telemetry
+  TELEMETRY_BRANCH: master
 
 jobs:
   single-cluster:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get branch name
-        run: "echo \"Branch name: ${GITHUB_REF#refs/heads/}\""
-
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          path: .
+          path: telemetry-stats
+
+      - uses: actions/checkout@v3
+        with: 
+          repository: rancher/telemetry
+          path: telemetry
+          ref: ${{ env.TELEMETRY_BRANCH }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v3
         with:
           go-version: ${{ env.SETUP_GO_VERSION }}
+
+      - name: Compile & containerize telemetry
+        run: |
+          set -x
+
+          # Compile
+          cd telemetry
+          curl -sL https://releases.rancher.com/dapper/latest/dapper-$(uname -s)-$(uname -m) > /usr/local/bin/dapper
+          chmod +x /usr/local/bin/dapper
+          dapper
+
+          # Containerize
+          docker build -f package/Dockerfile -t rancher/telemetry:${TELEMETRY_BRANCH} .
+
+      - name: Compile Telemetry Stats & build container image
+        run: |
+          cd telemetry-stats
+          set +x
+          docker build \
+            --build-arg VERSION=dev \
+            --build-arg upstream=. \
+            .
 
       - name: Provision k3d Cluster
         uses: AbsaOSS/k3d-action@v2
@@ -48,24 +81,13 @@ jobs:
             --api-port 6443
             --network "nw01"
 
-      # - name: Compile telemetry & build container image
-      #   run: |
-      #     curl -sL https://releases.rancher.com/dapper/latest/dapper-$(uname -s)-$(uname -m) > /usr/local/bin/dapper
-      #     chmod +x /usr/local/bin/dapper
-      #     TAG=dev dapper
-      - name: Compile Telemetry Stats & build container image
-        run: |
-            echo "DEBUG: GITHUB_REF=${GITHUB_REF}"
-            echo "DEBUG: clone_url=${{ github.event.pull_request.head.repo.clone_url }}"
-            docker build \
-              --build-arg version=${GITHUB_REF#refs/heads/} \
-              --build-arg upstream=${{ github.event.pull_request.head.repo.clone_url }} \
-              -t rancherlabs/rancher-telemetry-stats:dev \
-              .
-
-      - name: Upload Docker images
+      - name: Upload Telemetry Docker image
         run: |
           k3d image import -c ${{ env.CLUSTER_NAME }} rancherlabs/rancher-telemetry-stats:dev
+
+      - name: Upload Telemetry Stats Docker image
+        run: |
+          k3d image import -c ${{ env.CLUSTER_NAME }} rancher/telemetry:$TELEMETRY_BRANCH
 
       - name: Install Rancher
         run: |
@@ -75,7 +97,7 @@ jobs:
           echo "files in working directory: $(find)"
 
           pip install httpie
-          cd e2e
+          cd telemetry-stats/e2e
           source ./start
           install-rancher
 
@@ -92,7 +114,7 @@ jobs:
             fi
 
             if http --check-status --verify=no GET "https://${ip}" Host:${HOST_NAME} ; then
-              >&2 echo "Rancher installation verified successfully"
+              >&2 echo "Rancher installation successfully verified"
               exit 0
             fi
 
@@ -104,26 +126,26 @@ jobs:
 
       - name: Configure Rancher
         run: |
-          cd e2e && \
+          cd telemetry-stats/e2e && \
             source ./start && \
             CLUSTER_IP=$(get-cluster-ip) && \
             init-base "admin"
 
       - name: Install PostgreSQL
         run: |
-          cd e2e && source ./start && install-postgres-13.2
+          cd telemetry-stats/e2e && source ./start && install-postgres-13.2
 
-      - name: Install Telemetry Server Stable
+      - name: Install Telemetry Server from $TELEMETRY_BRANCH branch
         run: |
-          cd e2e && source ./start && install-telemetry-server
+          cd telemetry-stats/e2e && source ./start && install-telemetry-server $TELEMETRY_BRANCH
 
-      - name: Install Telemetry Client Stable
+      - name: Install Telemetry Client from $TELEMETRY_BRANCH branch
         run: |
-          cd e2e && source ./start && install-telemetry-client
+          cd telemetry-stats/e2e && source ./start && install-telemetry-client $TELEMETRY_BRANCH
 
       - name: Install InfluxDB
         run: |
-          cd e2e && source ./start && install-influx
+          cd telemetry-stats/e2e && source ./start && install-influx
 
       # - name: Install Telemetry Stats
       #   run: |
@@ -133,7 +155,7 @@ jobs:
         run: |
           set -x
           ns="${ns:-telemetry}"
-          cd e2e
+          cd telemetry-stats/e2e
           kubectl -n "${ns}" apply --wait -k manifests/tests
           kubectl -n telemetry wait \
             --for=condition=complete \
@@ -143,7 +165,7 @@ jobs:
       - name: Collect logs
         if: failure()
         run: |
-          bash k8s/kubectl-dump telemetry
+          bash telemetry/k8s/kubectl-dump telemetry
 
       - name: Upload logs
         uses: actions/upload-artifact@v3

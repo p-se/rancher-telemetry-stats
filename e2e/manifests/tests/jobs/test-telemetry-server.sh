@@ -33,7 +33,8 @@ while true; do
     )
     if [[ "$?" -ne 0 || -z "$result" || "$result" = "null" ]]; then
         echo >&2 "error: couldn't get active cluster count, result returned: $result"
-        exit 1
+        sleep 2
+        continue
     fi
 
     if [ "$result" -ne 1 ]; then

@@ -290,24 +290,33 @@ EOF
 }
 
 function install-telemetry-server() {
+  if [ -z "$1" ]; then
+    echo >&2 "error: install-telemetry-server: argument missing: need 1, have $#"
+    return 1
+  fi
+  if [[ "$1" != "stable" && "$1" != "dev" && "$1" != "master" ]]; then
+    echo >&2 "error: install-telemetry-server: argument invalid: need stable, dev, or master, have $1"
+    return 1
+  fi
   kubectl \
     -n telemetry \
     apply \
-    -k ./manifests/telemetry-server/base
-}
-
-function install-telemetry-server-dev() {
-  kubectl \
-    -n telemetry \
-    apply \
-    -k ./manifests/telemetry-server/dev
+    -k ./manifests/telemetry-server/$1
 }
 
 function install-telemetry-client() {
+  if [ -z "$1" ]; then
+    echo >&2 "error: install-telemetry-client: argument missing: need 1, have $#"
+    return 1
+  fi
+  if [[ "$1" != "stable" && "$1" != "dev" && "$1" != "master" ]]; then
+    echo >&2 "error: install-telemetry-client: argument invalid: need stable, dev, or master, have $1"
+    return 1
+  fi
   kubectl \
     -n telemetry \
     apply \
-    -k ./manifests/telemetry-client/base
+    -k ./manifests/telemetry-client/$1
 }
 
 function install-telemetry-client-dev() {
