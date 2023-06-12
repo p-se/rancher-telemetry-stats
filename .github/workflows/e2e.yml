@@ -71,6 +71,7 @@ jobs:
           docker build \
             --build-arg VERSION=dev \
             --build-arg upstream=. \
+            -t rancherlabs/rancher-telemetry-stats:dev \
             .
 
       - name: Provision k3d Cluster
