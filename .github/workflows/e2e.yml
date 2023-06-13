@@ -28,7 +28,7 @@ env:
   REPOSITORY: ${{ github.repository }}
   BRANCH: ${{ github.ref_name }}
   TELEMETRY_REPO: https://github.com/rancher/telemetry
-  TELEMETRY_BRANCH: master
+  TELEMETRY_BRANCH: release
 
 jobs:
   single-cluster:
@@ -70,7 +70,7 @@ jobs:
           set +x
           docker build \
             --build-arg VERSION=dev \
-            --build-arg upstream=. \
+            --build-arg upstream= \
             -t rancherlabs/rancher-telemetry-stats:dev \
             .
 

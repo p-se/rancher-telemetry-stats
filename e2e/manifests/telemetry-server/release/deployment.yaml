@@ -13,7 +13,7 @@ spec:
     spec:
       containers:
         - name: telemetry-server
-          image: rancher/telemetry:v0.6.1
+          image: rancher/telemetry:v0.6.1  # TODO use env var to allow this to be changed on Github action env vars.
           livenessProbe:
             failureThreshold: 3
             periodSeconds: 30
