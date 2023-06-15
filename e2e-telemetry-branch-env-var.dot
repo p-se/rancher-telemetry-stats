@@ -1,0 +1,19 @@
+digraph G {
+    TELEMETRY_BRANCH [shape=oval, label="The value of the E2E_TELEMETRY_BRANCH\nenvironment variable can be customized on Github \nfor Github Actions.\n\nIt can"];
+    node1 [shape=box, style=filled, fillcolor=lightyellow, label="This value defines which\nversion of Telemetry will be\nused for testing Telemetry Stats."];
+    master [shape=parallelogram, label="\"master\""];
+    release [shape=parallelogram, label="\"release\""];
+    TELEMETRY_BRANCH -> master [label="either be"];
+    TELEMETRY_BRANCH -> release [label="or"];
+    container_image [shape=box, label="Uses a released and published container image from rancher/telemetry:latest."];
+    build [shape=box, label="Compile application and build\ncontainer image from \"master\" branch.\n\"imagePullPolicy\" is set to \"Never\".\nThe container image\nrancher/telemetry:dev\nis built and used."];
+    # this label has styles applied to it
+    release -> container_image;
+    master -> build;
+    container_image -> telemetry_instance[label="is downloaded by\nk3d cluster"];
+    build -> telemetry_instance[label="is uploaded to k3d"];
+    subgraph {
+        rank=sink;
+        telemetry_instance [shape=box, label="Runs the compiled version of Telemetry."];
+    }
+}

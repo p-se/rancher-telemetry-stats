@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: telemetry-client
-          image: rancher/telemetry:v0.6.1
+          image: $(TELEMETRY_IMAGE)
           resources:
             requests:
               memory: 64Mi

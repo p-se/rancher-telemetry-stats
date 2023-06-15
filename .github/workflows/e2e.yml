@@ -28,7 +28,7 @@ env:
   REPOSITORY: ${{ github.repository }}
   BRANCH: ${{ github.ref_name }}
   TELEMETRY_REPO: https://github.com/rancher/telemetry
-  TELEMETRY_BRANCH: release
+  TELEMETRY_BRANCH: master
 
 jobs:
   single-cluster:
@@ -40,38 +40,78 @@ jobs:
           fetch-depth: 0
           path: telemetry-stats
 
+      - name: Get latest tag for telemetry
+        uses: actions/github-script@v4
+        id: latest_tag
+        if: ${{ env.TELEMETRY_BRANCH == 'release' }}
+        with:
+          script: |
+            const { data } = await github.repos.getLatestRelease({
+              owner: 'rancher',
+              repo: 'telemetry'
+            })
+            return data.tag_name;
+
+      - name: Replace TELEMETRY_BRANCH with latest tag
+        if: ${{ env.TELEMETRY_BRANCH == 'release' }}
+        run: |
+          export ACTUAL_TELEMETRY_BRANCH=${{ steps.latest_tag.outputs.result }}
+          echo "ACTUAL_TELEMETRY_BRANCH=${ACTUAL_TELEMETRY_BRANCH}" >> $GITHUB_ENV
+
+      - name: Set ACTUAL_TELEMETRY_BRANCH to the value of TELEMETRY_BRANCH if still unset
+        if: ${{ env.TELEMETRY_BRANCH != 'release' }}
+        run: |
+          echo "ACTUAL_TELEMETRY_BRANCH=${TELEMETRY_BRANCH}" >> $GITHUB_ENV
+
       - uses: actions/checkout@v3
         with: 
           repository: rancher/telemetry
           path: telemetry
-          ref: ${{ env.TELEMETRY_BRANCH }}
+          ref: ${{ env.ACTUAL_TELEMETRY_BRANCH }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v3
         with:
           go-version: ${{ env.SETUP_GO_VERSION }}
 
-      - name: Compile & containerize telemetry
+      - name: Compile & containerize Telemetry
+        if: ${{ env.TELEMETRY_BRANCH != 'release' }}
         run: |
           set -x
 
-          # Compile
+          # Compile using dapper
           cd telemetry
           curl -sL https://releases.rancher.com/dapper/latest/dapper-$(uname -s)-$(uname -m) > /usr/local/bin/dapper
           chmod +x /usr/local/bin/dapper
           dapper
 
-          # Containerize
-          docker build -f package/Dockerfile -t rancher/telemetry:${TELEMETRY_BRANCH} .
+          # Build container image
+          export image_name="rancher/telemetry:${ACTUAL_TELEMETRY_BRANCH}"
+
+          docker build \
+            --network=host \
+            -f package/Dockerfile \
+            -t ${image_name} \
+            .
+
+          # Make name of resulting image available to other steps
+          echo "TELEMETRY_IMAGE=${image_name}" >> $GITHUB_ENV
+
+      - name: Set remote container image for Telemetry release branch
+        if: ${{ env.TELEMETRY_BRANCH == 'release' }}
+        run: |
+          export image_name="rancher/telemetry:${ACTUAL_TELEMETRY_BRANCH}-amd64"
+          echo "TELEMETRY_IMAGE=${image_name}" >> $GITHUB_ENV
 
       - name: Compile Telemetry Stats & build container image
         run: |
           cd telemetry-stats
           set +x
           docker build \
+            --network=host \
             --build-arg VERSION=dev \
             --build-arg upstream= \
-            -t rancherlabs/rancher-telemetry-stats:dev \
+            -t rancherlabs/rancher-telemetry-stats:${ACTUAL_TELEMETRY_BRANCH} \
             .
 
       - name: Provision k3d Cluster
@@ -83,12 +123,14 @@ jobs:
             --network "nw01"
 
       - name: Upload Telemetry Docker image
+        if: ${{ env.TELEMETRY_BRANCH != 'release' }}
         run: |
-          k3d image import -c ${{ env.CLUSTER_NAME }} rancherlabs/rancher-telemetry-stats:dev
+          set -x
+          k3d image import -c ${{ env.CLUSTER_NAME }} rancher/telemetry:${ACTUAL_TELEMETRY_BRANCH}
 
       - name: Upload Telemetry Stats Docker image
         run: |
-          k3d image import -c ${{ env.CLUSTER_NAME }} rancher/telemetry:$TELEMETRY_BRANCH
+          k3d image import -c ${{ env.CLUSTER_NAME }} rancherlabs/rancher-telemetry-stats:dev
 
       - name: Install Rancher
         run: |
@@ -136,13 +178,20 @@ jobs:
         run: |
           cd telemetry-stats/e2e && source ./start && install-postgres-13.2
 
+      # - name: STOP HERE
+      #   run: |
+      #     echo "Developer mode !!!"
+      #     exit 1
+
       - name: Install Telemetry Server from $TELEMETRY_BRANCH branch
         run: |
-          cd telemetry-stats/e2e && source ./start && install-telemetry-server $TELEMETRY_BRANCH
+          set -x
+          cd telemetry-stats/e2e && source ./start && install-telemetry-server
 
       - name: Install Telemetry Client from $TELEMETRY_BRANCH branch
         run: |
-          cd telemetry-stats/e2e && source ./start && install-telemetry-client $TELEMETRY_BRANCH
+          set -x
+          cd telemetry-stats/e2e && source ./start && install-telemetry-client
 
       - name: Install InfluxDB
         run: |
