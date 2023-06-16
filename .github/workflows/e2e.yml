@@ -215,7 +215,7 @@ jobs:
       - name: Collect logs
         if: failure()
         run: |
-          bash telemetry/k8s/kubectl-dump telemetry
+          bash e2e/kubectl-dump telemetry
 
       - name: Upload logs
         uses: actions/upload-artifact@v3
