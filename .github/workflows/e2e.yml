@@ -130,7 +130,7 @@ jobs:
 
       - name: Upload Telemetry Stats Docker image
         run: |
-          k3d image import -c ${{ env.CLUSTER_NAME }} rancherlabs/rancher-telemetry-stats:dev
+          k3d image import -c ${{ env.CLUSTER_NAME }} rancherlabs/rancher-telemetry-stats:${ACTUAL_TELEMETRY_BRANCH}
 
       - name: Install Rancher
         run: |
