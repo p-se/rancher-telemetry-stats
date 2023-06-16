@@ -41,12 +41,12 @@ jobs:
           path: telemetry-stats
 
       - name: Get latest tag for telemetry
-        uses: actions/github-script@v4
+        uses: actions/github-script@v6
         id: latest_tag
         if: ${{ env.TELEMETRY_BRANCH == 'release' }}
         with:
           script: |
-            const { data } = await github.repos.getLatestRelease({
+            const { data } = await github.rest.repos.getLatestRelease({
               owner: 'rancher',
               repo: 'telemetry'
             })
