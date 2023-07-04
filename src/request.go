@@ -856,6 +856,8 @@ func (r *Requests) getJSON() error {
 
 	r.Data <- response.Data
 
+	log.Debugf("got %d records: %v", len(response.Data), response.Data)
+
 	return nil
 }
 
