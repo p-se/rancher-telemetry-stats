@@ -861,7 +861,7 @@ func (r *Requests) getJSON() error {
 }
 
 type Response struct {
-	Data []Request `json:"Data"`
+	Data []Request `json:"data"`
 }
 
 func (r *Requests) getHistoryJSON() error {
