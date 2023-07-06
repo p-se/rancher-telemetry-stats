@@ -1,4 +1,4 @@
-module github.com/rawmind0/rancher-telemetry-stats
+module github.com/rancherlabs/rancher-telemetry-stats
 
 go 1.12
 
