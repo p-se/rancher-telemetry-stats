@@ -113,7 +113,7 @@ jobs:
           set +x
           docker build \
             --network=host \
-            --build-arg VERSION=dev \
+            --build-arg version= \
             --build-arg upstream= \
             -t rancherlabs/rancher-telemetry-stats:dev \
             .
