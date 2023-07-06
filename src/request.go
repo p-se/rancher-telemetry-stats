@@ -62,16 +62,20 @@ func getJSONByUrl(url string, accessKey string, secretKey string, insecure bool,
 		panic(err)
 	}
 
-	respFormatted := json.NewDecoder(resp.Body).Decode(target)
+	err = json.NewDecoder(resp.Body).Decode(target)
 
 	// Timings recorded as part of internal metrics
-	log.Info("Time to fetch JSON from pgsql: ", float64((time.Since(start))/time.Millisecond), " ms")
+	log.Info(
+		"Time to fetch JSON from URL: ",
+		float64((time.Since(start))/time.Millisecond),
+		"ms ",
+		url,
+	)
 
 	// Close the response body, the underlying Transport should then close the connection.
 	resp.Body.Close()
 
-	// return formatted JSON
-	return respFormatted
+	return err
 }
 
 // getJSONByFile reads the content of a file and unmarshalls it to the target
