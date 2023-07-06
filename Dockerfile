@@ -21,7 +21,7 @@ RUN echo DEBUG $(pwd)
 RUN cd src/ && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GO111MODULE=on go build -v -a -tags netgo -o release/${NAME}
 RUN gzip -d src/GeoLite2-City.mmdb.gz
 
-FROM registry.suse.com/bci/bci-micro:15.4
+FROM registry.suse.com/bci/bci-base:15.4
 ENV NAME=rancher-telemetry-stats
 WORKDIR /opt/${NAME}
 COPY --from=build /src/src/release/${NAME} /bin/
