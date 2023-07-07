@@ -696,8 +696,12 @@ func (r *Requests) sendToInflux() {
 						}
 
 						for j, cq := range cqs {
-							log.Debug("Running query %d")
-							_, err := i.doQuery(fmt.Sprintf(cq, date, date), 1)
+							qry := fmt.Sprintf(cq, date, date)
+							log.WithFields(log.Fields{
+								"query": qry,
+								"no":    j + 1,
+							}).Debug()
+							_, err := i.doQuery(qry, 1)
 							if err != nil {
 								panic(fmt.Sprintf("error in CQ #%d: %v", j+1, err))
 							}
@@ -879,11 +883,11 @@ func (r *Requests) getData() {
 					for _, point := range req.getPoints() {
 						r.Output <- point
 					}
-					close(r.Output)
 				}
 			}
 		}
 	}
+	close(r.Output)
 }
 
 func (r *Requests) print() {
