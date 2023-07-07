@@ -64,19 +64,19 @@ func (i *Influx) Check(retry int) bool {
 // connection has been lost.
 func (i *Influx) CheckConnect(interval int) chan bool {
 	ticker := time.NewTicker(time.Second * time.Duration(interval))
-	connected := make(chan bool)
+	disconnected := make(chan bool)
 
 	go func() {
 		defer ticker.Stop()
 		for range ticker.C {
 			if !i.Check(2) {
-				close(connected)
+				close(disconnected)
 				return
 			}
 		}
 	}()
 
-	return connected
+	return disconnected
 }
 
 func (i *Influx) Connect() bool {

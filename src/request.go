@@ -546,8 +546,19 @@ func RunRequests(c *cli.Context) error {
 		flush:        c.Int("flush"),
 		restoreDates: restoreDates,
 	}
-	req := newRequests(params)
-	req.getDataByUrl()
+
+	if len(params.restoreDates) > 0 {
+		// Run once - restore operation
+		req := newRequests(params)
+		req.getDataByUrl()
+	} else {
+		// Run forever
+		for {
+			req := newRequests(params)
+			req.getDataByUrl()
+			time.Sleep(time.Duration(params.refresh) * time.Second)
+		}
+	}
 
 	return nil
 }
@@ -608,7 +619,7 @@ func (r *Requests) sendToInflux() {
 	i := newInflux(r.Config.influxurl, r.Config.influxdb, r.Config.influxuser, r.Config.influxpass)
 
 	if i.Connect() {
-		connected := i.CheckConnect(r.Config.refresh)
+		disconnected := i.CheckConnect(r.Config.refresh)
 		defer i.Close()
 
 		ticker := time.NewTicker(time.Second * time.Duration(r.Config.flush))
@@ -616,7 +627,7 @@ func (r *Requests) sendToInflux() {
 
 		for {
 			select {
-			case <-connected: // If data was sent to `connected`, that's a quit signal.
+			case <-disconnected:
 				return
 			case <-ticker.C: // Try to send the accumulated points we have.
 				if len(points) > 0 {
@@ -633,7 +644,7 @@ func (r *Requests) sendToInflux() {
 					pointsLength = len(points)
 
 					// Send to influx if buffer limit is reached.
-					if pointsLength == r.Config.limit {
+					if pointsLength >= r.Config.limit {
 						log.Info("Batch: Sending to influx ", pointsLength, " points")
 						if i.sendToInflux(points, 1) {
 							points = []influx.Point{}
@@ -647,9 +658,7 @@ func (r *Requests) sendToInflux() {
 					pointsLength = len(points)
 					if pointsLength > 0 {
 						log.Info("Batch: Sending to influx ", pointsLength, " points")
-						if i.sendToInflux(points, 1) { // Send all points.
-							points = []influx.Point{} // Clear `points`.
-						} else {
+						if !i.sendToInflux(points, 1) { // Send all points.
 							log.Warn("Batch: Sending remaining points failed")
 						}
 					}
@@ -702,95 +711,24 @@ func (r *Requests) sendToInflux() {
 	}
 }
 
-func (r *Requests) addReader() chan struct{} {
-	newChannel := make(chan struct{}, 1)
-	r.Readers = append(r.Readers, newChannel)
-
-	return newChannel
-}
-
-func (r *Requests) closeReaders() {
-	for _, readerChannel := range r.Readers {
-		if readerChannel != nil {
-			readerChannel <- struct{}{}
-		}
-	}
-	r.Readers = nil
-}
-
 // getDataByUrl creates a few channels and starts reading data in a goroutine
 // and writing data in another goroutine.
 func (r *Requests) getDataByUrl() {
-	var in, out sync.WaitGroup
-	indone := make(chan struct{}, 1)
-	outdone := make(chan struct{}, 1)
+	var wg sync.WaitGroup
 
-	in.Add(1)
+	wg.Add(1)
 	go func() {
-		defer in.Done()
-		// The data is read here.
-		r.getDataByChan(r.addReader())
+		r.getData()
+		wg.Done()
 	}()
 
-	out.Add(1)
+	wg.Add(1)
 	go func() {
-		defer out.Done()
-		// The data is written here.
-		r.getOutput()
+		r.writeOutput()
+		wg.Done()
 	}()
 
-	go func() {
-		in.Wait()
-		close(r.Input)
-		close(r.Output)
-		close(indone)
-	}()
-
-	go func() {
-		out.Wait()
-		close(outdone)
-	}()
-
-	for {
-		select {
-		case <-indone:
-			<-outdone
-			return
-		case <-outdone:
-			log.Error("Aborting...")
-			go r.closeReaders()
-			return
-		case <-r.Exit:
-			//close(r.Exit)
-			log.Info("Exit signal detected....Closing...")
-			go r.closeReaders()
-			<-outdone
-			return
-		}
-	}
-}
-
-func (r *Requests) getDataByChan(stop chan struct{}) {
-	var ticker *time.Ticker
-
-	if len(r.Config.restoreDates) == 0 {
-		ticker = time.NewTicker(time.Second * time.Duration(r.Config.refresh))
-		defer ticker.Stop()
-	}
-
-	r.getData(stop)
-
-	if len(r.Config.restoreDates) == 0 {
-		for {
-			select {
-			case <-ticker.C:
-				log.Info("Tick: Getting data...")
-				r.getData(stop)
-			case <-stop:
-				return
-			}
-		}
-	}
+	wg.Wait()
 }
 
 func (r *Requests) getDataByFile() {
@@ -818,10 +756,12 @@ func (r *Requests) getDataByFile() {
 		if req.getData(r.Config.geoipdb) {
 			if r.Config.format == "json" {
 				r.Input <- &req
+				close(r.Input)
 			} else {
 				for _, point := range req.getPoints() {
 					r.Output <- point
 				}
+				close(r.Output)
 			}
 		}
 	}
@@ -856,6 +796,7 @@ func (r *Requests) getJSON() error {
 	}
 
 	r.Data <- response.Data
+	defer close(r.Data)
 
 	log.Debugf("got %d records: %v", len(response.Data), response.Data)
 
@@ -901,7 +842,7 @@ func (r *Requests) getHistoryJSON() error {
 
 // getData fetches the remote data and writes it to the r.Output channel of
 // Requests.
-func (r *Requests) getData(stop chan struct{}) {
+func (r *Requests) getData() {
 	restoring := len(r.Config.restoreDates) > 0
 
 	// Fetch data and fill r.Data with it.
@@ -925,7 +866,7 @@ func (r *Requests) getData(stop chan struct{}) {
 		// record are removed and lost forever.
 		for _, day := range r.Config.restoreDates {
 			if !r.deleteForDay(day.String()) {
-				stop <- struct{}{}
+				close(r.Output)
 				return
 			}
 		}
@@ -940,15 +881,10 @@ func (r *Requests) getData(stop chan struct{}) {
 					for _, point := range req.getPoints() {
 						r.Output <- point
 					}
+					close(r.Output)
 				}
 			}
 		}
-	}
-
-	if restoring {
-		// Signal we're done with reading input. Only signal if data is being
-		// restored, never if run in "daemon" mode.
-		stop <- struct{}{}
 	}
 }
 
@@ -960,9 +896,9 @@ func (r *Requests) print() {
 	}
 }
 
-// getOutput writes the data that has been retrieved in parallel from another
+// writeOutput writes the data that has been retrieved in parallel from another
 // goroutine to InfluxDB. The data is printed if `preview` is enabled.
-func (r *Requests) getOutput() {
+func (r *Requests) writeOutput() {
 	if r.Config.format == "json" {
 		r.printJson()
 	} else {
@@ -975,27 +911,21 @@ func (r *Requests) getOutput() {
 }
 
 func (r *Requests) printJson() {
-	for {
-		select {
-		case req := <-r.Input:
-			if req != nil {
-				req.printJson()
-			} else {
-				return
-			}
+	for req := range r.Input {
+		if req != nil {
+			req.printJson()
+		} else {
+			return
 		}
 	}
 }
 
 func (r *Requests) printInflux() {
-	for {
-		select {
-		case p := <-r.Output:
-			if p != nil {
-				fmt.Println(p.String())
-			} else {
-				return
-			}
+	for p := range r.Output {
+		if p != nil {
+			fmt.Println(p.String())
+		} else {
+			return
 		}
 	}
 }
