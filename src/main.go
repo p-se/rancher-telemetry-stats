@@ -155,8 +155,8 @@ func main() {
 		{
 			Name:        "restore",
 			Description: "restore data from a specific date or range and exit",
-			Action: func(c *cli.Context) error {
-				return cli.NewExitError(RunRequests(c), 1)
+			Action: func(c *cli.Context) {
+				cli.NewExitError(RunRequests(c), 1)
 			},
 			Flags: append(flags,
 				cli.StringFlag{
