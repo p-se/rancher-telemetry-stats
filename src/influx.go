@@ -54,7 +54,7 @@ func (i *Influx) Check(retry int) bool {
 			return false
 		}
 	}
-	log.Info("Influx response time: ", respTime)
+	log.Debug("Influx response time: ", respTime)
 	return true
 }
 
